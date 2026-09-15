@@ -1,0 +1,2 @@
+[console_scripts]
+migraguard = migraguard.cli:main
