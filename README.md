@@ -1,1 +1,183 @@
-# Obsidiate
+# MigraGuard
+
+> **SQL migration static analysis — catch schema risks before they merge.**
+
+MigraGuard scans PostgreSQL migration files (`.sql`) and flags dangerous schema operations that normal code review misses: table-locking DDL statements, foreign key columns without indexes, and irreversible `DROP` operations. It acts as a pre-merge safety gate, producing a structured, color-coded terminal report — or a machine-readable JSON output for future CI integration — without connecting to any database.
+
+---
+
+## Why it matters
+
+Database migrations carry a class of risk invisible to logic review: an `ALTER COLUMN … SET TYPE` on a large table rewrites every row under an exclusive lock, silently taking your production service down for minutes. An unindexed foreign key column turns every join into a full sequential scan. A `DROP TABLE` with no rollback path means an accidental deployment has no recovery route. MigraGuard makes these risks explicit and actionable before the migration ever reaches production.
+
+---
+
+## Install
+
+**Requirements:** Python 3.11+
+
+```bash
+# Clone the repo
+git clone https://github.com/your-org/migraguard.git
+cd migraguard
+
+# Install in editable mode (recommended for development)
+pip install -e .
+
+# Or install with dev dependencies (for running tests)
+pip install -e ".[dev]"
+```
+
+---
+
+## Usage
+
+### Scan a single file
+
+```bash
+migraguard scan path/to/migration.sql
+```
+
+### Scan a directory (recursive)
+
+```bash
+migraguard scan migrations/
+```
+
+### JSON output (machine-readable, for CI)
+
+```bash
+migraguard scan migrations/ --format json
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | No high or critical findings |
+| `1`  | One or more **high** or **critical** findings detected |
+| `2`  | Usage/input error (file not found, no .sql files in directory) |
+
+---
+
+## Example
+
+### Input migration (`migrations/20240315_add_status.sql`)
+
+```sql
+-- Add account status to users table
+ALTER TABLE users
+    ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active';
+
+-- Foreign key to user_segments, no index added
+ALTER TABLE user_events
+    ADD CONSTRAINT fk_ue_user FOREIGN KEY (user_id) REFERENCES users(id);
+
+-- Remove legacy table
+DROP TABLE legacy_oauth_tokens;
+```
+
+### Terminal output
+
+```
+  MigraGuard — SQL Migration Static Analysis
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  🔴  CRITICAL (1)  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+╭─ [1] MG003  migrations/20240315_add_status.sql  line 9 ──────────────────────╮
+│                                                                               │
+│  Explanation                                                                  │
+│  DROP TABLE legacy_oauth_tokens is irreversible. All data in the table will  │
+│  be permanently lost once this migration is committed.                        │
+│                                                                               │
+│  Suggested fix                                                                │
+│  Before dropping, archive the data:                                           │
+│    CREATE TABLE legacy_oauth_tokens_archive AS SELECT * FROM                  │
+│    legacy_oauth_tokens;                                                       │
+│                                                                               │
+│  Statement                                                                    │
+│  DROP TABLE legacy_oauth_tokens                                               │
+╰───────────────────────────────────────────────────────────────────────────────╯
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  🟠  HIGH (2)  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+╭─ [1] MG001  migrations/20240315_add_status.sql  line 2 ──────────────────────╮
+│  Explanation                                                                  │
+│  ADD COLUMN with NOT NULL and a non-null DEFAULT causes a full table rewrite  │
+│  on PostgreSQL < 11, holding an ACCESS EXCLUSIVE lock for the entire duration.│
+│  ...                                                                          │
+╰───────────────────────────────────────────────────────────────────────────────╯
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  🟡  MEDIUM (1)  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+╭─ [1] MG002  migrations/20240315_add_status.sql  line 6 ──────────────────────╮
+│  Explanation                                                                  │
+│  Column `user_events.user_id` is a foreign key but has no index defined in   │
+│  this migration. Joins and cascade deletes will trigger full sequential scans.│
+│  ...                                                                          │
+╰───────────────────────────────────────────────────────────────────────────────╯
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  Summary  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+╭──────────┬───────╮
+│ Severity │ Count │
+├──────────┼───────┤
+│ CRITICAL │     1 │
+│ HIGH     │     2 │
+│ MEDIUM   │     1 │
+├──────────┼───────┤
+│ TOTAL    │     4 │
+╰──────────┴───────╯
+
+❌  FAILED — high/critical findings detected
+```
+
+### JSON output (`--format json`)
+
+```json
+[
+  {
+    "rule_id": "MG001",
+    "severity": "high",
+    "statement": "ALTER TABLE users ADD COLUMN account_status VARCHAR(20) NOT NULL DEFAULT 'active'",
+    "line_number": 2,
+    "explanation": "ADD COLUMN with NOT NULL and a non-null DEFAULT causes a full table rewrite...",
+    "suggested_fix": "Safe pattern: (1) ADD COLUMN col TYPE DEFAULT NULL...",
+    "file_path": "migrations/20240315_add_status.sql"
+  }
+]
+```
+
+---
+
+## Rules
+
+| Rule ID | Name | Severity | Description |
+|---------|------|----------|-------------|
+| `MG001` | Locking Operation | `critical` / `high` | ALTER TABLE ops that hold ACCESS EXCLUSIVE lock (type changes, ADD COLUMN NOT NULL DEFAULT, FK/CHECK constraints without NOT VALID, ADD PRIMARY KEY) |
+| `MG002` | Missing FK Index | `medium` | Foreign key columns with no corresponding index in the same migration |
+| `MG003` | Reversibility | `critical` / `high` | DROP TABLE (critical), DROP COLUMN (high), destructive migrations with no down-migration defined |
+
+---
+
+## Running tests
+
+```bash
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+---
+
+## Roadmap
+
+The following features are **not** included in this MVP (Phase 1) and are planned for future phases:
+
+- **CI Integration** — GitHub Actions / GitLab CI native integration with PR annotations
+- **Table-size-aware scoring** — Promote severity based on estimated row count (requires DB connection or `pg_class` stats)
+- **MySQL / MariaDB support** — Locking rules differ significantly; needs a separate dialect adapter
+- **Dashboard / Web UI** — Trend analysis, historical scan results, team-level reporting
+- **Auto-fix suggestions as patch files** — Generate safe migration rewrites automatically
+- **`CREATE INDEX` without CONCURRENTLY** — Currently not flagged; should warn in a future `MG004` rule
+- **`TRUNCATE` detection** — Destructive but not a DROP; planned for Reversibility rule v2
+- **Linting for `lock_timeout` presence** — Warn when high-risk migrations don't set a lock timeout guard
