@@ -1,0 +1,38 @@
+name: "MigraGuard CI Gate"
+description: "Automatically analyzes SQL migrations for risky operations on pull requests."
+author: "MigraGuard"
+
+inputs:
+  github_token:
+    description: "GitHub token to post PR review comments."
+    required: true
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install MigraGuard
+      shell: bash
+      run: pip install ${{ github.action_path }}
+
+    - name: Run MigraGuard CI Check
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          migraguard ci-check \
+            --pr ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --commit ${{ github.event.pull_request.head.sha }}
+        else
+          echo "Not a pull request. Running local check against main."
+          # If not a PR, we might not have a base branch to diff against easily in Actions
+          # without more context, but falling back to main is a reasonable default.
+          migraguard ci-check --diff-against main
+        fi

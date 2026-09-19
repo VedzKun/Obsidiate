@@ -1,0 +1,22 @@
+name: MigraGuard
+
+on:
+  pull_request:
+    paths:
+      - '**/*.sql'
+
+jobs:
+  scan:
+    name: Scan Migrations
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run MigraGuard
+        uses: ./ # Replaces with `uses: your-org/migraguard@main` for consumers

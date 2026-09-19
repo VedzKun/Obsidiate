@@ -8,9 +8,12 @@ Description-Content-Type: text/markdown
 Requires-Dist: sqlglot>=23.0
 Requires-Dist: click>=8.1
 Requires-Dist: rich>=13.0
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: requests>=2.31.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: pytest-cov>=5.0; extra == "dev"
+Requires-Dist: responses>=0.23.0; extra == "dev"
 
 # MigraGuard
 
@@ -183,11 +186,73 @@ pytest tests/ -v
 
 ---
 
+## CI Setup
+
+MigraGuard can run automatically on GitHub Pull Requests to block merges when risky migrations are detected and post inline review comments.
+
+### 1. Add Workflow File
+
+Create `.github/workflows/migraguard.yml` in your repository:
+
+```yaml
+name: MigraGuard CI
+
+on:
+  pull_request:
+    paths:
+      - '**/*.sql'
+
+jobs:
+  scan:
+    name: Scan Migrations
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # Required for posting PR reviews
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run MigraGuard
+        uses: your-org/migraguard@main # Replace with the actual action path
+```
+
+### 2. Configuration
+
+Create `.migraguard.yml` in your repository root to configure behavior:
+
+```yaml
+# Only scan these files (default: **/*.sql)
+migration_pattern: "migrations/*.sql"
+
+# Fail the CI check if these severities are found (default: high, critical)
+blocking_severities:
+  - "critical"
+  - "high"
+```
+
+### 3. Local Dry-Run
+
+You can preview exactly what the CI gate will flag before opening a PR:
+
+```bash
+migraguard ci-check --diff-against main
+```
+
+### 4. PR Feedback Example
+
+| PR Review Comment |
+|-------------------|
+| **Severity:** CRITICAL<br>**Rule:** MG003<br><br>DROP TABLE legacy_oauth_tokens is irreversible. All data in the table will be permanently lost once this migration is committed.<br><br>*Suggested fix:* Before dropping, archive the data... |
+
+---
+
 ## Roadmap
 
-The following features are **not** included in this MVP (Phase 1) and are planned for future phases:
+The following features are **not** included in this phase (Phase 2) and are planned for future phases:
 
-- **CI Integration** — GitHub Actions / GitLab CI native integration with PR annotations
 - **Table-size-aware scoring** — Promote severity based on estimated row count (requires DB connection or `pg_class` stats)
 - **MySQL / MariaDB support** — Locking rules differ significantly; needs a separate dialect adapter
 - **Dashboard / Web UI** — Trend analysis, historical scan results, team-level reporting
@@ -195,3 +260,6 @@ The following features are **not** included in this MVP (Phase 1) and are planne
 - **`CREATE INDEX` without CONCURRENTLY** — Currently not flagged; should warn in a future `MG004` rule
 - **`TRUNCATE` detection** — Destructive but not a DROP; planned for Reversibility rule v2
 - **Linting for `lock_timeout` presence** — Warn when high-risk migrations don't set a lock timeout guard
+
+### Done (Phase 2)
+- ~~**CI Integration** — GitHub Actions native integration with PR annotations~~

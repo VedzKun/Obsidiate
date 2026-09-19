@@ -1,6 +1,7 @@
 README.md
 pyproject.toml
 migraguard/__init__.py
+migraguard/__main__.py
 migraguard/cli.py
 migraguard/parser.py
 migraguard/report.py
@@ -10,6 +11,10 @@ migraguard.egg-info/dependency_links.txt
 migraguard.egg-info/entry_points.txt
 migraguard.egg-info/requires.txt
 migraguard.egg-info/top_level.txt
+migraguard/ci/__init__.py
+migraguard/ci/config.py
+migraguard/ci/diff.py
+migraguard/ci/github_client.py
 migraguard/rules/__init__.py
 migraguard/rules/base.py
 migraguard/rules/locking.py
